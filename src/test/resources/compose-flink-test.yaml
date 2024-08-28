@@ -1,0 +1,52 @@
+version: "1.27.0"
+name: e2e-tests-udf-examples
+services:
+  mysql:
+    hostname: mysql
+    image: mysql:8.0.39
+    ports:
+      - "3306:3306"
+    environment:
+      - MYSQL_ROOT_PASSWORD=sECreT
+      - MYSQL_USER=flink
+      - MYSQL_PASSWORD=flink
+      - TZ=UTC
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "--silent"]
+      interval: 5s
+      timeout: 3s
+      retries: 2
+      start_period: 0s
+    restart: always
+    volumes:
+      - ./db/mysql_init.sql:/docker-entrypoint-initdb.d/mysql_init.sql
+
+  jobmanager:
+    image: flink:1.19.1-scala_2.12-java17
+    ports:
+      - "8081:8081"
+    command: jobmanager
+    volumes:
+      - ./flink/libs/mysql-connector-java-8.0.30.jar:/opt/flink/lib/mysql-connector-java-8.0.30.jar
+      - ./flink/libs/flink-sql-connector-mysql-cdc-3.1.0.jar:/opt/flink/lib/flink-sql-connector-mysql-cdc-3.1.0.jar
+      - ./flink/udfs/flink-udf-examples-1.0.0.jar:/opt/flink/lib/flink-udf-examples-1.0.0.jar
+    environment:
+      - |
+        FLINK_PROPERTIES=
+        jobmanager.rpc.address: jobmanager       
+
+  taskmanager:
+    image: flink:1.19.1-scala_2.12-java17
+    depends_on:
+      - jobmanager
+    command: taskmanager
+    scale: 1
+    volumes:
+      - ./flink/libs/mysql-connector-java-8.0.30.jar:/opt/flink/lib/mysql-connector-java-8.0.30.jar
+      - ./flink/libs/flink-sql-connector-mysql-cdc-3.1.0.jar:/opt/flink/lib/flink-sql-connector-mysql-cdc-3.1.0.jar    
+      - ./flink/udfs/flink-udf-examples-1.0.0.jar:/opt/flink/lib/flink-udf-examples-1.0.0.jar
+    environment:
+      - |
+        FLINK_PROPERTIES=
+        jobmanager.rpc.address: jobmanager
+        taskmanager.numberOfTaskSlots: 2       

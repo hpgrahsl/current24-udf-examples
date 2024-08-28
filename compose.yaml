@@ -1,0 +1,86 @@
+version: "3.5"
+services:
+
+  mysql:
+    hostname: mysql
+    image: mysql:8.0.39
+    ports:
+      - "3306:3306"
+    environment:
+      - MYSQL_ROOT_PASSWORD=sECreT
+      - MYSQL_USER=flink
+      - MYSQL_PASSWORD=flink
+      - TZ=UTC
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "--silent"]
+      interval: 5s
+      timeout: 3s
+      retries: 2
+      start_period: 0s
+    restart: always
+    volumes:
+      - ./db/mysql_init.sql:/docker-entrypoint-initdb.d/mysql_init.sql
+    networks:
+      - demo-network
+
+  sql-client:
+    image: flink:1.19.1-scala_2.12-java17
+    tty: true
+    volumes:
+      - ./target/flink-udf-examples-1.0.0.jar:/opt/flink/lib/flink-udf-examples-1.0.0.jar
+      - ./flink/libs/mysql-connector-java-8.0.30.jar:/opt/flink/lib/mysql-connector-java-8.0.30.jar
+      - ./flink/libs/flink-sql-connector-mysql-cdc-3.1.0.jar:/opt/flink/lib/flink-sql-connector-mysql-cdc-3.1.0.jar
+      - ./flink/conf/flink-conf.yaml:/opt/flink/conf/flink-conf.yaml
+      - ./flink/conf/sql-client-conf.yaml:/opt/flink/conf/sql-client-conf.yaml
+      - ./flink/bin/sql-client.sh:/opt/flink/sql-client.sh
+      - ./flink/udf/udf_init.sql:/opt/flink/udf_init.sql
+    depends_on:
+      - jobmanager
+      - taskmanager
+    entrypoint:
+      - /bin/bash
+      - -c
+      - |
+        tail -f /dev/null
+    environment:
+      FLINK_JOBMANAGER_HOST: jobmanager
+    networks:
+      - demo-network
+
+  jobmanager:
+    image: flink:1.19.1-scala_2.12-java17
+    ports:
+      - "8081:8081"
+    command: jobmanager
+    volumes:
+      - ./flink/libs/mysql-connector-java-8.0.30.jar:/opt/flink/lib/mysql-connector-java-8.0.30.jar
+      - ./flink/libs/flink-sql-connector-mysql-cdc-3.1.0.jar:/opt/flink/lib/flink-sql-connector-mysql-cdc-3.1.0.jar
+      - ./flink/udfs/flink-udf-examples-1.0.0.jar:/opt/flink/lib/flink-udf-examples-1.0.0.jar
+    environment:
+      - |
+        FLINK_PROPERTIES=
+        jobmanager.rpc.address: jobmanager       
+    networks:
+      - demo-network
+
+  taskmanager:
+    image: flink:1.19.1-scala_2.12-java17
+    depends_on:
+      - jobmanager
+    command: taskmanager
+    scale: 1
+    volumes:
+      - ./flink/libs/mysql-connector-java-8.0.30.jar:/opt/flink/lib/mysql-connector-java-8.0.30.jar
+      - ./flink/libs/flink-sql-connector-mysql-cdc-3.1.0.jar:/opt/flink/lib/flink-sql-connector-mysql-cdc-3.1.0.jar    
+      - ./flink/udfs/flink-udf-examples-1.0.0.jar:/opt/flink/lib/flink-udf-examples-1.0.0.jar
+    environment:
+      - |
+        FLINK_PROPERTIES=
+        jobmanager.rpc.address: jobmanager
+        taskmanager.numberOfTaskSlots: 2       
+    networks:
+      - demo-network
+
+networks:
+  demo-network:
+    name: flink-udf-examples
