@@ -20,9 +20,14 @@ import org.testcontainers.containers.wait.strategy.Wait;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+@EnabledIfSystemProperty(named="e2e.tests",matches="true")
 @Testcontainers
 public class BasicEndToEndUdfsTest {
 
+    private static final String MYSQL_USERNAME = "root";
+    private static final String MYSQL_PASSWORD = "sECreT";
+    private static final String MYSQL_DB_NAME = "udf_demo";
+    
     private static final String NAME_SERVICE_MYSQL = "mysql";
     private static final String NAME_SERVICE_FLINK_JOB_MANAGER = "jobmanager";
     private static final int PORT_MYSQL = 3306;
@@ -50,6 +55,7 @@ public class BasicEndToEndUdfsTest {
         T_ENV.createTemporaryFunction("HELLO_UDF", HelloUdf.class);
         T_ENV.createTemporaryFunction("CALC_UDF", CalcUdf.class);
         T_ENV.createTemporaryFunction("OVERLOADED_UDF", OverloadedUdf.class);
+        T_ENV.createTemporaryFunction("FIXED_REPEATER_UDF", FixedRepeaterUdf.class);
     }
 
     @Test
@@ -63,15 +69,15 @@ public class BasicEndToEndUdfsTest {
                     PRIMARY KEY (id) NOT ENFORCED
                 )  WITH (
                     'connector' = 'mysql-cdc',
-                    'hostname' = 'mysql',
-                    'port' = '3306',
-                    'username' = 'root',
-                    'password' = 'sECreT',
+                    'hostname' = '%s',
+                    'port' = '%s',
+                    'username' = '%s',
+                    'password' = '%s',
                     'server-time-zone' = 'UTC',
-                    'database-name' = 'udf_demo',
+                    'database-name' = '%s',
                     'table-name' = 'hello'
                 );
-            """
+            """.formatted(NAME_SERVICE_MYSQL,PORT_MYSQL,MYSQL_USERNAME,MYSQL_PASSWORD,MYSQL_DB_NAME)
         );
         try (var iterator = T_ENV.executeSql(
             """
@@ -97,15 +103,15 @@ public class BasicEndToEndUdfsTest {
                     PRIMARY KEY (id) NOT ENFORCED
                 )  WITH (
                     'connector' = 'mysql-cdc',
-                    'hostname' = 'mysql',
-                    'port' = '3306',
-                    'username' = 'root',
-                    'password' = 'sECreT',
+                    'hostname' = '%s',
+                    'port' = '%s',
+                    'username' = '%s',
+                    'password' = '%s',
                     'server-time-zone' = 'UTC',
-                    'database-name' = 'udf_demo',
+                    'database-name' = '%s',
                     'table-name' = 'calc'
                 );
-            """
+            """.formatted(NAME_SERVICE_MYSQL,PORT_MYSQL,MYSQL_USERNAME,MYSQL_PASSWORD,MYSQL_DB_NAME)
         );
         try (var iterator = T_ENV.executeSql(
             """
@@ -132,16 +138,15 @@ public class BasicEndToEndUdfsTest {
                     PRIMARY KEY (id) NOT ENFORCED
                 )  WITH (
                     'connector' = 'mysql-cdc',
-                    'hostname' = 'mysql',
-                    'port' = '3306',
-                    'username' = 'root',
-                    'password' = 'sECreT',
-                    'jdbc.properties.maxAllowedPacket' = '16777216',
+                    'hostname' = '%s',
+                    'port' = '%s',
+                    'username' = '%s',
+                    'password' = '%s',
                     'server-time-zone' = 'UTC',
-                    'database-name' = 'udf_demo',
+                    'database-name' = '%s',
                     'table-name' = 'overloaded'
                 );
-            """
+            """.formatted(NAME_SERVICE_MYSQL,PORT_MYSQL,MYSQL_USERNAME,MYSQL_PASSWORD,MYSQL_DB_NAME)
         );
         try (var iterator = T_ENV.executeSql(
             """
@@ -178,12 +183,75 @@ public class BasicEndToEndUdfsTest {
         }
     }
 
-    private static <T> List<T> collectFieldsFromRowIterator(CloseableIterator<Row> iterator, String fieldName, int numRows) {
+    @Test
+    void fixedRepeaterUdfTest() throws Exception {
+        T_ENV.executeSql(
+            """
+                CREATE TABLE repeater (
+                    id int,
+                    data1 varchar(255),
+                    data2 float,
+                    data3 int,
+                    data4 boolean,
+                    PRIMARY KEY (id) NOT ENFORCED
+                )  WITH (
+                    'connector' = 'mysql-cdc',
+                    'hostname' = '%s',
+                    'port' = '%s',
+                    'username' = '%s',
+                    'password' = '%s',
+                    'server-time-zone' = 'UTC',
+                    'database-name' = '%s',
+                    'table-name' = 'repeater'
+                );
+            """.formatted(NAME_SERVICE_MYSQL,PORT_MYSQL,MYSQL_USERNAME,MYSQL_PASSWORD,MYSQL_DB_NAME)
+        );
+        try (var iterator = T_ENV.executeSql(
+            """
+                SELECT 
+                    FIXED_REPEATER_UDF(data1,2) as udf_output1,
+                    FIXED_REPEATER_UDF(data2,3) as udf_output2,
+                    FIXED_REPEATER_UDF(data3,1) as udf_output3,
+                    FIXED_REPEATER_UDF(data4,5) as udf_output4
+                FROM repeater;
+            """
+        ).collect()) {
+            List<List<String>> results = collectFieldsFromRowIterator(iterator,List.of("udf_output1","udf_output2","udf_output3","udf_output4"),4);
+            assertThat(results,containsInAnyOrder(
+                List.of(
+                    "hello,hello",
+                    "23.0,23.0,23.0",
+                    "42",
+                    "false,false,false,false,false"
+                ),
+                List.of(
+                    "current,current",
+                    "0.0,0.0,0.0",
+                    "2024",
+                    "true,true,true,true,true"
+                ),
+                List.of(
+                    "apache,apache",
+                    "99.99,99.99,99.99",
+                    "100",
+                    "true,true,true,true,true"
+                ),
+                List.of(
+                    "flink,flink",
+                    "0.0,0.0,0.0",
+                    "2024",
+                    "false,false,false,false,false"
+                )
+            ));
+        }
+    }
+
+    private static <T> List<T> collectFieldsFromRowIterator(CloseableIterator<Row> iterator, String fieldName, int rowLimit) {
         List<T> results = new ArrayList<>();
         while(iterator.hasNext()) {
             var row = iterator.next();
             results.add(row.<T>getFieldAs(fieldName));
-            if(results.size() == numRows) {
+            if(results.size() == rowLimit) {
                 break;
             }
         }
